@@ -1,5 +1,5 @@
 NUM_OF_TR_AT = 2110176
-NUM_OF_TR_LT =  93827
+NUM_OF_TR_LT = 93827
 NUM_OF_FEAT = 23
 NUM_OF_DAY = 31
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
@@ -29,8 +29,6 @@ function load_at(data, shuf_at ,input, target, at_id, at_lt_split, bs)
         input[bat_id] = data[shuf_at_id]
         target[bat_id] = CLASS_AT
     end
-    at_id = at_id + al_lt_split
-    return at_id
 end
 
 function load_lt(data, shuf_lt ,input, target, lt_id, at_lt_split, bs)
@@ -40,8 +38,6 @@ function load_lt(data, shuf_lt ,input, target, lt_id, at_lt_split, bs)
         input[bat_id] = data[shuf_lt_id]
         target[bat_id] = CLASS_LT
     end
-    lt_id = lt_id + bs - at_lt_split
-    return lt_id
 end
 
 function train()
@@ -49,28 +45,33 @@ function train()
     local shuf_lt = torch.randperm(NUM_OF_TR_LT)
     -- local num_of_used_tr_at = NUM_OF_TR_AT-(NUM_OF_TR_AT%BAT_SIZE)
     -- local shuf_tr_at = shuf_tr_at[{{1,num_of_used_tr_at}}]
-    
+
     local lt_id = 1
     local at_id = 1
-    
+
     while at_id < NUM_OF_TR_AT - BAT_SIZE do
         local input = torch.Tensor(BAT_SIZE, NUM_OF_DAY, NUM_OF_FEAT)
         local target = torch.Tensor(BAT_SIZE)
-        
+
         local at_lt_split = get_at_lt_split(AT_LT_NORM, BAT_SIZE)
-        
-        -- load at
-        at_id = load_at(tr_at, shuf_at ,input, target, at_id, at_lt_split, BAT_SIZE)
-        
+
+        -- load tr_at to input and target w.r.t. shuf_at and at_lt_split
+        load_at(tr_at, shuf_at ,input, target, at_id, at_lt_split, BAT_SIZE)
+        at_id = at_id + al_lt_split
+
         -- reshuffle lt and start from 0 if not enough left for a batch
         if lt_id + BAT_SIZE - at_lt_split - 1 > NUM_OF_TR_LT then
             lt_id = 1
             shuf_lt = torch.randperm(NUM_OF_TR_LT)
         end
-        
-        -- load lt
-        lt_id = load_lt(tr_lt, shuf_lt ,input, target, lt_id, at_lt_split, BAT_SIZE)
-        
+
+        -- load tr_lt to input and target w.r.t. shuf_lt and at_lt_split
+        load_lt(tr_lt, shuf_lt ,input, target, lt_id, at_lt_split, BAT_SIZE)
+        lt_id = lt_id + BAT_SIZE - at_lt_split
+
+        input = input:cuda()
+        target = target:cuda()
+
         -- assert((at_lt_split*CLASS_AT+(BAT_SIZE-at_lt_split)*CLASS_LT)/BAT_SIZE == torch.mean(input), 'wrong')
         -- assert(torch.mean(input) == torch.mean(target), 'wrong')
     end
