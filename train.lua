@@ -43,8 +43,6 @@ end
 function train()
     local shuf_at = torch.randperm(NUM_OF_TR_AT)
     local shuf_lt = torch.randperm(NUM_OF_TR_LT)
-    -- local num_of_used_tr_at = NUM_OF_TR_AT-(NUM_OF_TR_AT%BAT_SIZE)
-    -- local shuf_tr_at = shuf_tr_at[{{1,num_of_used_tr_at}}]
 
     local lt_id = 1
     local at_id = 1
@@ -72,10 +70,7 @@ function train()
         input = input:cuda()
         target = target:cuda()
 
-        -- assert((at_lt_split*CLASS_AT+(BAT_SIZE-at_lt_split)*CLASS_LT)/BAT_SIZE == torch.mean(input), 'wrong')
-        -- assert(torch.mean(input) == torch.mean(target), 'wrong')
     end
-    -- print('pass')
 end
 
 -- train()
