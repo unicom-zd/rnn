@@ -1,5 +1,7 @@
-NUM_OF_TR_AT = 2110176
-NUM_OF_TR_LT = 93827
+MODEL_PREFIX = 'p82'
+MODEL_SUFFIX = 's1'
+PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
+USE_BN = true
 NUM_OF_FEAT = 23
 NUM_OF_DAY = 31
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
@@ -7,43 +9,137 @@ CLASS_AT = 1.0
 CLASS_LT = 2.0
 BAT_SIZE = 10
 ATLT_NORM = {0, 0.1, 0.5} -- mean,std,shift
+HID_SIZE = 64
+RHO = 10
+BAT_SIZE = 10
+DROPOUT = 0.25
+LEARNING_RATE = 0.01
+OPTIM_METHOD = 'adam'
+OPTIM_PARA = {}
+OPTIM_PARA['adam'] = {
+    learningRate=LEARNING_RATE,
+    beta1=0.9,
+    beta2=0.995,
+    epsilon=1e-7
+}
 
+optim = require 'optim'
+nn = require 'nn'
+rnn = require 'rnn'
 math = require 'math'
-dl = require 'dataload'
+dataload = require 'dataload'
+U = require 'util'
+require 'nngraph'
 
-tr_at = torch.Tensor(NUM_OF_TR_AT, NUM_OF_DAY, NUM_OF_FEAT):fill(1)
-tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(1)
-tr_lt = torch.Tensor(NUM_OF_TR_LT, NUM_OF_DAY, NUM_OF_FEAT):fill(2)
-tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(2)
+torch.manualSeed(torch.initialSeed())
 
-at_dataloader = dl.TensorLoader(tr_at, tr_at_target)
-lt_dataloader = dl.TensorLoader(tr_lt, tr_lt_target)
+-- 1. load train data
+tr_lt = U.load_data('tr_1m_LT_23pr')
+tr_at = U.load_data('tr_1m_AT_23pr')
+print(#tr_lt, #tr_at)
+NUM_OF_TR_LT = (#tr_lt)[1]
+NUM_OF_TR_AT = (#tr_at)[1]
 
-function get_atlt_split(norm, bs)
-    local mean, std, shift = table.unpack(norm)
-    local atlt_frac = torch.normal(mean, std) + shift
-    local atlt_split = torch.round(bs * atlt_frac)
-    atlt_split = math.max(1, atlt_split)
-    atlt_split = math.min(bs-1, atlt_split)
-    return atlt_split
+tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(CLASS_AT)
+tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(CLASS_LT)
+at_dataloader = dataload.TensorLoader(tr_at, tr_at_target)
+lt_dataloader = dataload.TensorLoader(tr_lt, tr_lt_target)
+
+-- 2. load val data
+-- val_lt = U.load_data('val_1m_LT_23pr')
+-- val_at = U.load_data('val_1m_AT_23pr')
+-- print(#val_lt, #val_at)
+-- NUM_OF_VAL_LT = (#val_lt)[1]
+-- NUM_OF_VAL_AT = (#val_at)[1]
+
+-- 3. define model
+model = nn.Sequential()
+do
+    nn.FastLSTM.usenngraph = true -- faster
+    nn.FastLSTM.bn = USE_BN
+
+    local lstm = nn.Sequential()
+
+    lstm:add(nn.FastLSTM(NUM_OF_FEAT, HID_SIZE, RHO))
+    if DROPOUT > 0 then
+        lstm:add(nn.Dropout(DROPOUT))
+    end
+
+    lstm:add(nn.FastLSTM(HID_SIZE, HID_SIZE, RHO))
+    if DROPOUT > 0 then
+        lstm:add(nn.Dropout(DROPOUT))
+    end
+
+    lstm = nn.Sequencer(lstm)
+
+    model:add(nn.SplitTable(2)) -- assuming batchSize x seqLen x feat
+    model:add(lstm)
+    model:add(nn.SelectTable(-1)) -- select last output
+    model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
 end
 
-function resample(at_dataloader, lt_dataloader, bs)
-    local split = get_atlt_split(ATLT_NORM, bs)
-    local longTensor = torch.LongTensor
-    local at_indices = longTensor(split):random(1, at_dataloader:size())
-    local lt_indices = longTensor(bs-split):random(1, lt_dataloader:size())
-    local at_inputs, at_targets = at_dataloader:index(at_indices)
-    local lt_inputs, lt_targets = lt_dataloader:index(lt_indices)
-    local input = torch.cat({at_inputs, lt_inputs}, 1)
-    local target = torch.cat({at_targets, lt_targets}, 1)
-    return input, target, split
-end
+-- 4. define criterion
+criterion = nn.CrossEntropyCriterion()
 
-function train(batchsize, epochsize)
-    for i = 1, math.floor(epochsize / batchsize) do
-        local input, target, atlt_split = resample(at_dataloader, lt_dataloader, batchsize)
+-- 5. set up cuda
+model = model:cuda()
+criterion = criterion:cuda()
+
+-- 6. auto-grad
+parameters,gradParameters = model:getParameters()
+
+function train(dl, batchsize, num_of_batch)
+    print('begin trainning')
+    U.dump_para(PREFIX..'-parameters')
+    local time_logger = optim.Logger(PREFIX..'-time.log')
+    time_logger:setNames{'setup time', 'for-back time', 'batch time'}
+    local train_logger = optim.Logger(PREFIX..'-train.log')
+    train_logger:setNames{'training error'}
+
+    local num_of_batch = num_of_batch or math.floor(NUM_OF_TR_AT / batchsize)
+    local at_dataloader, lt_dataloader = table.unpack(dl)
+    for i = 1, num_of_batch do
+        local batch_timer = torch.Timer()
+
+        -- prepare data
+        local timer = torch.Timer()
+        local split = U.get_atlt_split(ATLT_NORM, batchsize)
+        local input, target = U.resample(at_dataloader, lt_dataloader, split, batchsize)
         input = input:cuda()
         target = target:cuda()
+        local setup_time = timer:time().real
+
+        -- forward + backward
+        timer:reset()
+        optim[OPTIM_METHOD](function(x)
+            if x ~= parameters then parameters:copy(x) end
+            gradParameters:zero()
+
+            model:forward(input)
+            local loss = criterion:forward(model.output, target)
+
+            criterion:backward(model.output, target)
+            model:backward(input, criterion.gradInput)
+
+            return loss, gradParameters
+        end, parameters, OPTIM_PARA[OPTIM_METHOD])
+        local bf_time = timer:time().real
+
+        local batch_time = batch_timer:time().real
+        train_logger:add{criterion.output}
+        time_logger:add{setup_time, bf_time, batch_time}
     end
+end
+
+function eval(dl, batchsize)
+    local at_dataloader, lt_dataloader = table.unpack(dl)
+    local function loop(dataloader)
+        local upbound = #dataloader - #dataloader % batchsize
+        for k, inputs, targets in dataloader:subiter(batchsize, upbound) do
+            local input = inputs:cuda()
+            local target = targets:cuda()
+        end
+    end
+    loop(at_dataloader)
+    loop(lt_dataloader)
 end
