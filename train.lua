@@ -6,71 +6,44 @@ NUM_OF_CLASS = 2 -- AT = 1, LT = 2
 CLASS_AT = 1.0
 CLASS_LT = 2.0
 BAT_SIZE = 10
-AT_LT_NORM = {0, 0.1, 0.5} -- mean,std,shift
+ATLT_NORM = {0, 0.1, 0.5} -- mean,std,shift
 
 math = require 'math'
+dl = require 'dataload'
 
 tr_at = torch.Tensor(NUM_OF_TR_AT, NUM_OF_DAY, NUM_OF_FEAT):fill(1)
+tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(1)
 tr_lt = torch.Tensor(NUM_OF_TR_LT, NUM_OF_DAY, NUM_OF_FEAT):fill(2)
+tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(2)
 
-function get_at_lt_split(norm, bs)
+at_dataloader = dl.TensorLoader(tr_at, tr_at_target)
+lt_dataloader = dl.TensorLoader(tr_lt, tr_lt_target)
+
+function get_atlt_split(norm, bs)
     local mean, std, shift = table.unpack(norm)
-    local al_lt_frac = torch.normal(mean, std) + shift
-    local al_lt_split = torch.round(bs * al_lt_frac)
-    al_lt_split = math.max(1, al_lt_split)
-    al_lt_split = math.min(bs-1, al_lt_split)
-    return al_lt_split
+    local atlt_frac = torch.normal(mean, std) + shift
+    local atlt_split = torch.round(bs * atlt_frac)
+    atlt_split = math.max(1, atlt_split)
+    atlt_split = math.min(bs-1, atlt_split)
+    return atlt_split
 end
 
-function load_at(data, shuf_at ,input, target, at_id, at_lt_split, bs)
-    for sub_at_id = at_id, at_id + at_lt_split - 1 do
-        local bat_id = sub_at_id - at_id + 1
-        local shuf_at_id = shuf_at[sub_at_id]
-        input[bat_id] = data[shuf_at_id]
-        target[bat_id] = CLASS_AT
-    end
+function resample(at_dataloader, lt_dataloader, bs)
+    local split = get_atlt_split(ATLT_NORM, bs)
+    local longTensor = torch.LongTensor
+    local at_indices = longTensor(split):random(1, at_dataloader:size())
+    local lt_indices = longTensor(bs-split):random(1, lt_dataloader:size())
+    local at_inputs, at_targets = at_dataloader:index(at_indices)
+    local lt_inputs, lt_targets = lt_dataloader:index(lt_indices)
+    local input = torch.cat({at_inputs, lt_inputs}, 1)
+    local target = torch.cat({at_targets, lt_targets}, 1)
+    return input, target, split
 end
 
-function load_lt(data, shuf_lt ,input, target, lt_id, at_lt_split, bs)
-    for sub_lt_id = lt_id, lt_id + bs - at_lt_split - 1 do
-        local bat_id = at_lt_split + sub_lt_id - lt_id + 1
-        local shuf_lt_id = shuf_lt[sub_lt_id]
-        input[bat_id] = data[shuf_lt_id]
-        target[bat_id] = CLASS_LT
-    end
-end
-
-function train()
-    local shuf_at = torch.randperm(NUM_OF_TR_AT)
-    local shuf_lt = torch.randperm(NUM_OF_TR_LT)
-
-    local lt_id = 1
-    local at_id = 1
-
-    while at_id < NUM_OF_TR_AT - BAT_SIZE do
-        local input = torch.Tensor(BAT_SIZE, NUM_OF_DAY, NUM_OF_FEAT)
-        local target = torch.Tensor(BAT_SIZE)
-
-        local at_lt_split = get_at_lt_split(AT_LT_NORM, BAT_SIZE)
-
-        -- load tr_at to input and target w.r.t. shuf_at and at_lt_split
-        load_at(tr_at, shuf_at ,input, target, at_id, at_lt_split, BAT_SIZE)
-        at_id = at_id + al_lt_split
-
-        -- reshuffle lt and start from 0 if not enough left for a batch
-        if lt_id + BAT_SIZE - at_lt_split - 1 > NUM_OF_TR_LT then
-            lt_id = 1
-            shuf_lt = torch.randperm(NUM_OF_TR_LT)
-        end
-
-        -- load tr_lt to input and target w.r.t. shuf_lt and at_lt_split
-        load_lt(tr_lt, shuf_lt ,input, target, lt_id, at_lt_split, BAT_SIZE)
-        lt_id = lt_id + BAT_SIZE - at_lt_split
-
+function train(batchsize, epochsize)
+    for i = 1, math.floor(epochsize / batchsize) do
+        local input, target, atlt_split = resample(at_dataloader, lt_dataloader, batchsize)
         input = input:cuda()
         target = target:cuda()
-
     end
 end
-
--- train()
