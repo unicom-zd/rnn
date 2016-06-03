@@ -1,15 +1,18 @@
 
-MODEL_PREFIX = 'm3'
+MODEL_PREFIX = 'm6'
 MODEL_SUFFIX = 's1'
 PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
-USE_BN = false
+USE_BN = true
 NUM_OF_FEAT = 23
 NUM_OF_DAY = 31
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
 CLASS_AT = 1.0
 CLASS_LT = 2.0
 BAT_SIZE = 10
-ATLT_NORM = {0, 0.1, 0.5} -- mean,std,shift
+RESAMPLE_RATIO = 4
+ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
+-- {0, 0.1, 0.5} 1:1
+-- {0, 0.1, 0.8} 4:1
 HID_SIZE = 64
 RHO = 999999 -- 30
 BAT_SIZE = 256
@@ -22,6 +25,9 @@ OPTIM_PARA['adam'] = {
     beta1=0.9,
     beta2=0.995,
     epsilon=1e-7
+}
+OPTIM_PARA['sgd'] = {
+    learningRate=LEARNING_RATE,
 }
 
 optim = require 'optim'
@@ -79,7 +85,7 @@ do
 
     lstm = nn.Sequencer(lstm)
 
-    model:add(nn.SplitTable(2)) -- assuming batchSize x seqLen x feat
+    model:add(nn.SplitTable(1, 2)) -- assuming batchSize x seqLen x feat
     model:add(lstm)
     model:add(nn.SelectTable(-1)) -- select last output
     model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
@@ -144,9 +150,11 @@ function train(dl, batchsize, num_of_batch, prefix)
     torch.save(prefix..'-model.t7',model)
 end
 
-function eval(dl, batchsize)
+function eval(dl, batchsize, prefix)
     print('begin eval')
     model:evaluate()
+    local eval_logger = optim.Logger(prefix..'-eval.log')
+    eval_logger:setNames{'at->at', 'at->lt', 'lt->at', 'lt->lt'}
     local confusion = optim.ConfusionMatrix(NUM_OF_CLASS)
     local at_dataloader, lt_dataloader = table.unpack(dl)
     local function loop(dataloader)
@@ -160,21 +168,26 @@ function eval(dl, batchsize)
     loop(at_dataloader)
     loop(lt_dataloader)
     confusion:updateValids()
+    local m = confusion.mat
+    eval_logger:add{m[{1,1}], m[{1,2}], m[{2,1}], m[{2,2}]}
     return confusion
 end
 
 NUM_OF_BAT_IN_1EPOCH = math.floor((NUM_OF_TR_AT * 2) / BAT_SIZE)
 START_ITER = 1
-NUM_OF_ITER = 1
+NUM_OF_ITER = 3
+LEARNING_RATE = 0.01
+OPTIM_PARA[OPTIM_METHOD]['learningRate'] = LEARNING_RATE
 for i = START_ITER, START_ITER + NUM_OF_ITER - 1 do
+    print('===it'..i..'===')
     local prefix = PREFIX .. '-it' .. tostring(i)
     train({at_dataloader,lt_dataloader}, BAT_SIZE,
             NUM_OF_BAT_IN_1EPOCH, prefix)
-    local conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE)
-    print('===it'..i..'===')
-    print(conf)
+    local conf = eval({at_dataloader,lt_dataloader}, BAT_SIZE, prefix..'-train')
+    print('train eval', conf.valids)
+    local conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, prefix..'-vali')
+    print('vali eval', conf.valids)
 end
 
--- conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE)
-
--- print(conf)
+-- conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, PREFIX .. '-it1')
+-- print(conf.valids)
