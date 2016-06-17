@@ -1,15 +1,15 @@
-
-MODEL_PREFIX = 'm6'
+MODEL_PREFIX = 'm1'
 MODEL_SUFFIX = 's1'
 PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
 USE_BN = true
-NUM_OF_FEAT = 23
-NUM_OF_DAY = 31
+NUM_OF_FEAT = 24
+NUM_OF_DAY = 92
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
+NUM_OF_HID_LAYER = 3 -- input size = output size and previously it is 1
 CLASS_AT = 1.0
 CLASS_LT = 2.0
-BAT_SIZE = 10
-RESAMPLE_RATIO = 4
+RESAMPLE_RATIO = 2
+LT_WEIGHT = 1
 ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
 -- {0, 0.1, 0.5} 1:1
 -- {0, 0.1, 0.8} 4:1
@@ -18,7 +18,7 @@ RHO = 999999 -- 30
 BAT_SIZE = 256
 DROPOUT = 0 -- 0.5 disable dropout when 0
 LEARNING_RATE = 0.01
-OPTIM_METHOD = 'adam'
+OPTIM_METHOD = 'sgd'
 OPTIM_PARA = {}
 OPTIM_PARA['adam'] = {
     learningRate=LEARNING_RATE,
@@ -42,8 +42,8 @@ require 'cunn'
 torch.manualSeed(torch.initialSeed())
 
 -- 1. load train data
-tr_lt = util.load_data('tr_1m_LT_23pr')
-tr_at = util.load_data('tr_1m_AT_23pr')
+tr_lt = util.load_data('1602_3m_LT_24pr')
+tr_at = util.load_data('1602_3m_AT_24pr')
 print(#tr_lt, #tr_at)
 NUM_OF_TR_LT = (#tr_lt)[1]
 NUM_OF_TR_AT = (#tr_at)[1]
@@ -54,8 +54,8 @@ at_dataloader = dataload.TensorLoader(tr_at, tr_at_target)
 lt_dataloader = dataload.TensorLoader(tr_lt, tr_lt_target)
 
 -- 2. load val data
-val_lt = util.load_data('val_1m_LT_23pr')
-val_at = util.load_data('val_1m_AT_23pr')
+val_lt = util.load_data('1603_3m_LT_24pr')
+val_at = util.load_data('1603_3m_AT_24pr')
 print(#val_lt, #val_at)
 NUM_OF_VAL_LT = (#val_lt)[1]
 NUM_OF_VAL_AT = (#val_at)[1]
@@ -64,6 +64,16 @@ val_at_target = torch.Tensor(NUM_OF_VAL_AT):fill(CLASS_AT)
 val_lt_target = torch.Tensor(NUM_OF_VAL_LT):fill(CLASS_LT)
 val_at_dataloader = dataload.TensorLoader(val_at, val_at_target)
 val_lt_dataloader = dataload.TensorLoader(val_lt, val_lt_target)
+
+-- -- fine tunning
+-- MODEL_PREFIX = 'm8'
+-- MODEL_SUFFIX = 's1'
+-- PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
+-- PREV_IT = '8'
+-- util.load_para(PREFIX..'-it'..PREV_IT..'-parameters')
+-- model = torch.load(PREFIX..'-it'..PREV_IT..'-model.t7')
+-- criterion = nn.CrossEntropyCriterion(torch.Tensor{1, LT_WEIGHT})
+-- criterion = criterion:cuda()
 
 -- 3. define model
 model = nn.Sequential()
@@ -78,7 +88,14 @@ do
         lstm:add(nn.Dropout(DROPOUT))
     end
 
-    lstm:add(nn.FastLSTM(HID_SIZE, HID_SIZE, RHO))
+    for i = 1, NUM_OF_HID_LAYER do
+        lstm:add(nn.FastLSTM(HID_SIZE, HID_SIZE, RHO))
+        if DROPOUT > 0 then
+            lstm:add(nn.Dropout(DROPOUT))
+        end
+    end
+
+    lstm:add(nn.FastLSTM(HID_SIZE, NUM_OF_CLASS, RHO))
     if DROPOUT > 0 then
         lstm:add(nn.Dropout(DROPOUT))
     end
@@ -88,11 +105,11 @@ do
     model:add(nn.SplitTable(1, 2)) -- assuming batchSize x seqLen x feat
     model:add(lstm)
     model:add(nn.SelectTable(-1)) -- select last output
-    model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
+    -- model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
 end
 
 -- 4. define criterion
-criterion = nn.CrossEntropyCriterion()
+criterion = nn.CrossEntropyCriterion(torch.Tensor{1, LT_WEIGHT})
 
 -- 5. set up cuda
 model = model:cuda()
@@ -175,9 +192,9 @@ end
 
 NUM_OF_BAT_IN_1EPOCH = math.floor((NUM_OF_TR_AT * 2) / BAT_SIZE)
 START_ITER = 1
-NUM_OF_ITER = 3
-LEARNING_RATE = 0.01
-OPTIM_PARA[OPTIM_METHOD]['learningRate'] = LEARNING_RATE
+NUM_OF_ITER = 20
+-- LEARNING_RATE = 0.01
+-- OPTIM_PARA[OPTIM_METHOD]['learningRate'] = LEARNING_RATE
 for i = START_ITER, START_ITER + NUM_OF_ITER - 1 do
     print('===it'..i..'===')
     local prefix = PREFIX .. '-it' .. tostring(i)
@@ -188,6 +205,3 @@ for i = START_ITER, START_ITER + NUM_OF_ITER - 1 do
     local conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, prefix..'-vali')
     print('vali eval', conf.valids)
 end
-
--- conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, PREFIX .. '-it1')
--- print(conf.valids)
