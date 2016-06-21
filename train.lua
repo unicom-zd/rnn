@@ -44,7 +44,8 @@ if USE_COMMAND_LINE then
 end
 
 PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
-ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
+ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)}
+-- mean,std,shift
 -- {0, 0.1, 0.5} 1:1
 -- {0, 0.1, 0.8} 4:1
 
@@ -60,44 +61,50 @@ require 'cunn'
 torch.manualSeed(torch.initialSeed())
 
 -- 1. load train data
-tr_lt = util.load_data('1602_1m_LT_24pr')
-tr_at = util.load_data('1602_1m_AT_24pr')
--- tr_lt = torch.Tensor(93827, 31, 24):fill(0)
--- tr_at = torch.Tensor(2110176, 31, 24):fill(0)
-print(#tr_lt, #tr_at)
-NUM_OF_TR_LT = (#tr_lt)[1]
-NUM_OF_TR_AT = (#tr_at)[1]
-NUM_OF_TR_DAY = (#tr_lt)[2]
+do
+  tr_lt = util.load_data('1602_1m_LT_24pr')
+  tr_at = util.load_data('1602_1m_AT_24pr')
+  -- tr_lt = torch.Tensor(93827, 31, 24):fill(0)
+  -- tr_at = torch.Tensor(2110176, 31, 24):fill(0)
+  print(#tr_lt, #tr_at)
+  NUM_OF_TR_LT = (#tr_lt)[1]
+  NUM_OF_TR_AT = (#tr_at)[1]
+  NUM_OF_TR_DAY = (#tr_lt)[2]
 
-tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(CLASS_AT)
-tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(CLASS_LT)
-at_dataloader = dataload.TensorLoader(tr_at, tr_at_target)
-lt_dataloader = dataload.TensorLoader(tr_lt, tr_lt_target)
+  tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(CLASS_AT)
+  tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(CLASS_LT)
+  at_dataloader = dataload.TensorLoader(tr_at, tr_at_target)
+  lt_dataloader = dataload.TensorLoader(tr_lt, tr_lt_target)
+end
 
 -- 2. load val data
-val_lt = util.load_data('1603_1m_LT_24pr')
-val_at = util.load_data('1603_1m_AT_24pr')
--- val_lt = torch.Tensor(88842, 31, 24):fill(0)
--- val_at = torch.Tensor(2048501, 31, 24):fill(0)
-print(#val_lt, #val_at)
-NUM_OF_VAL_LT = (#val_lt)[1]
-NUM_OF_VAL_AT = (#val_at)[1]
-NUM_OF_VAL_DAY = (#val_lt)[2]
+do
+  val_lt = util.load_data('1603_1m_LT_24pr')
+  val_at = util.load_data('1603_1m_AT_24pr')
+  -- val_lt = torch.Tensor(88842, 31, 24):fill(0)
+  -- val_at = torch.Tensor(2048501, 31, 24):fill(0)
+  print(#val_lt, #val_at)
+  NUM_OF_VAL_LT = (#val_lt)[1]
+  NUM_OF_VAL_AT = (#val_at)[1]
+  NUM_OF_VAL_DAY = (#val_lt)[2]
 
-val_at_target = torch.Tensor(NUM_OF_VAL_AT):fill(CLASS_AT)
-val_lt_target = torch.Tensor(NUM_OF_VAL_LT):fill(CLASS_LT)
-val_at_dataloader = dataload.TensorLoader(val_at, val_at_target)
-val_lt_dataloader = dataload.TensorLoader(val_lt, val_lt_target)
+  val_at_target = torch.Tensor(NUM_OF_VAL_AT):fill(CLASS_AT)
+  val_lt_target = torch.Tensor(NUM_OF_VAL_LT):fill(CLASS_LT)
+  val_at_dataloader = dataload.TensorLoader(val_at, val_at_target)
+  val_lt_dataloader = dataload.TensorLoader(val_lt, val_lt_target)
+end
 
--- -- fine tunning
--- MODEL_PREFIX = 'm8'
--- MODEL_SUFFIX = 's1'
--- PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
--- PREV_IT = '8'
--- util.load_para(PREFIX..'-it'..PREV_IT..'-parameters')
--- model = torch.load(PREFIX..'-it'..PREV_IT..'-model.t7')
--- criterion = nn.CrossEntropyCriterion(torch.Tensor{1, LT_WEIGHT})
--- criterion = criterion:cuda()
+-- fine tuning
+if false then
+  MODEL_PREFIX = 'm8'
+  MODEL_SUFFIX = 's1'
+  PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
+  PREV_IT = '8'
+  util.load_para(PREFIX..'-it'..PREV_IT..'-parameters')
+  model = torch.load(PREFIX..'-it'..PREV_IT..'-model.t7')
+  criterion = nn.CrossEntropyCriterion(torch.Tensor{1, LT_WEIGHT})
+  criterion = criterion:cuda()
+end
 
 -- 3. define model
 model = nn.Sequential()
@@ -170,16 +177,16 @@ function train(dl, batchsize, num_of_batch, prefix)
     -- forward + backward
     timer:reset()
     optim[OPTIM_METHOD](function(x)
-      if x ~= parameters then parameters:copy(x) end
-      gradParameters:zero()
+        if x ~= parameters then parameters:copy(x) end
+        gradParameters:zero()
 
-      model:forward(input)
-      local loss = criterion:forward(model.output, target)
+        model:forward(input)
+        local loss = criterion:forward(model.output, target)
 
-      criterion:backward(model.output, target)
-      model:backward(input, criterion.gradInput)
+        criterion:backward(model.output, target)
+        model:backward(input, criterion.gradInput)
 
-      return loss, gradParameters
+        return loss, gradParameters
     end, parameters, OPTIM_PARA[OPTIM_METHOD])
     local bf_time = timer:time().real
 
@@ -216,6 +223,7 @@ function eval(dl, batchsize, prefix)
   return confusion
 end
 
+-- begin training
 NUM_OF_BAT_IN_1EPOCH = math.floor(NUM_OF_TR_AT*(1+1/RESAMPLE_RATIO) / BAT_SIZE)
 START_ITER = 1
 -- NUM_OF_ITER = 10
