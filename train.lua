@@ -1,18 +1,14 @@
-MODEL_PREFIX = 'm1'
+-- MODEL_PREFIX = 'm1'
 MODEL_SUFFIX = 's1'
-PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
+-- PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
 USE_BN = true
 NUM_OF_FEAT = 24
-NUM_OF_DAY = 92
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
 NUM_OF_HID_LAYER = 3 -- input size = output size and previously it is 1
 CLASS_AT = 1.0
 CLASS_LT = 2.0
-RESAMPLE_RATIO = 2
+-- RESAMPLE_RATIO = 2
 LT_WEIGHT = 1
-ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
--- {0, 0.1, 0.5} 1:1
--- {0, 0.1, 0.8} 4:1
 HID_SIZE = 64
 RHO = 999999 -- 30
 BAT_SIZE = 256
@@ -30,6 +26,24 @@ OPTIM_PARA['sgd'] = {
     learningRate=LEARNING_RATE,
 }
 
+-- command line option
+cmd = torch.CmdLine()
+cmd:text('Example:')
+cmd:text('th train.lua --MODEL_PREFIX "m2" --RESAMPLE_RATIO 4')
+cmd:text('Options:')
+cmd:option('--MODEL_PREFIX', 'm1', 'model prefix')
+cmd:option('--RESAMPLE_RATIO', 1, 'AT:LT = RESAMPLE_RATIO:1')
+
+local opt = cmd:parse(arg or {})
+-- load opt to environment, key as variable name and value as value
+for name,val in pairs(opt) do
+   _G[name] = val
+end
+PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
+ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
+-- {0, 0.1, 0.5} 1:1
+-- {0, 0.1, 0.8} 4:1
+
 optim = require 'optim'
 nn = require 'nn'
 rnn = require 'rnn'
@@ -42,11 +56,14 @@ require 'cunn'
 torch.manualSeed(torch.initialSeed())
 
 -- 1. load train data
-tr_lt = util.load_data('1602_3m_LT_24pr')
-tr_at = util.load_data('1602_3m_AT_24pr')
+tr_lt = util.load_data('1602_1m_LT_24pr')
+tr_at = util.load_data('1602_1m_AT_24pr')
+-- tr_lt = torch.Tensor(93827, 31, 24):fill(0)
+-- tr_at = torch.Tensor(2110176, 31, 24):fill(0)
 print(#tr_lt, #tr_at)
 NUM_OF_TR_LT = (#tr_lt)[1]
 NUM_OF_TR_AT = (#tr_at)[1]
+NUM_OF_TR_DAY = (#tr_lt)[2]
 
 tr_at_target = torch.Tensor(NUM_OF_TR_AT):fill(CLASS_AT)
 tr_lt_target = torch.Tensor(NUM_OF_TR_LT):fill(CLASS_LT)
@@ -54,11 +71,14 @@ at_dataloader = dataload.TensorLoader(tr_at, tr_at_target)
 lt_dataloader = dataload.TensorLoader(tr_lt, tr_lt_target)
 
 -- 2. load val data
-val_lt = util.load_data('1603_3m_LT_24pr')
-val_at = util.load_data('1603_3m_AT_24pr')
+val_lt = util.load_data('1603_1m_LT_24pr')
+val_at = util.load_data('1603_1m_AT_24pr')
+-- val_lt = torch.Tensor(88842, 31, 24):fill(0)
+-- val_at = torch.Tensor(2048501, 31, 24):fill(0)
 print(#val_lt, #val_at)
 NUM_OF_VAL_LT = (#val_lt)[1]
 NUM_OF_VAL_AT = (#val_at)[1]
+NUM_OF_VAL_DAY = (#val_lt)[2]
 
 val_at_target = torch.Tensor(NUM_OF_VAL_AT):fill(CLASS_AT)
 val_lt_target = torch.Tensor(NUM_OF_VAL_LT):fill(CLASS_LT)
@@ -122,6 +142,7 @@ function train(dl, batchsize, num_of_batch, prefix)
     print('begin trainning')
     model:training()
     util.dump_para(prefix..'-parameters')
+    print(prefix)
     local time_logger = optim.Logger(prefix..'-time.log')
     time_logger:setNames{'setup time', 'for-back time', 'batch time'}
     local para_logger = optim.Logger(prefix..'-para.log')
@@ -170,6 +191,7 @@ end
 function eval(dl, batchsize, prefix)
     print('begin eval')
     model:evaluate()
+    print(prefix)
     local eval_logger = optim.Logger(prefix..'-eval.log')
     eval_logger:setNames{'at->at', 'at->lt', 'lt->at', 'lt->lt'}
     local confusion = optim.ConfusionMatrix(NUM_OF_CLASS)
@@ -190,9 +212,9 @@ function eval(dl, batchsize, prefix)
     return confusion
 end
 
-NUM_OF_BAT_IN_1EPOCH = math.floor((NUM_OF_TR_AT * 2) / BAT_SIZE)
+NUM_OF_BAT_IN_1EPOCH = math.floor(NUM_OF_TR_AT*(1+1/RESAMPLE_RATIO) / BAT_SIZE)
 START_ITER = 1
-NUM_OF_ITER = 20
+NUM_OF_ITER = 10
 -- LEARNING_RATE = 0.01
 -- OPTIM_PARA[OPTIM_METHOD]['learningRate'] = LEARNING_RATE
 for i = START_ITER, START_ITER + NUM_OF_ITER - 1 do
