@@ -1,7 +1,7 @@
 -- MODEL_PREFIX = 'm1'
 MODEL_SUFFIX = 's1'
--- PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
 USE_BN = true
+USE_COMMAND_LINE = true
 NUM_OF_FEAT = 24
 NUM_OF_CLASS = 2 -- AT = 1, LT = 2
 NUM_OF_HID_LAYER = 3 -- input size = output size and previously it is 1
@@ -17,28 +17,32 @@ LEARNING_RATE = 0.01
 OPTIM_METHOD = 'sgd'
 OPTIM_PARA = {}
 OPTIM_PARA['adam'] = {
-    learningRate=LEARNING_RATE,
-    beta1=0.9,
-    beta2=0.995,
-    epsilon=1e-7
+  learningRate=LEARNING_RATE,
+  beta1=0.9,
+  beta2=0.995,
+  epsilon=1e-7
 }
 OPTIM_PARA['sgd'] = {
-    learningRate=LEARNING_RATE,
+  learningRate=LEARNING_RATE,
 }
 
--- command line option
-cmd = torch.CmdLine()
-cmd:text('Example:')
-cmd:text('th train.lua --MODEL_PREFIX "m2" --RESAMPLE_RATIO 4')
-cmd:text('Options:')
-cmd:option('--MODEL_PREFIX', 'm1', 'model prefix')
-cmd:option('--RESAMPLE_RATIO', 1, 'AT:LT = RESAMPLE_RATIO:1')
+if USE_COMMAND_LINE then
+  -- command line option
+  local cmd = torch.CmdLine()
+  cmd:text('Example:')
+  cmd:text('th train.lua --MODEL_PREFIX "m2" --RESAMPLE_RATIO 4')
+  cmd:text('Options:')
+  cmd:option('--MODEL_PREFIX', 'm1', 'model prefix')
+  cmd:option('--RESAMPLE_RATIO', 1, 'AT:LT = RESAMPLE_RATIO:1')
+  cmd:option('--NUM_OF_ITER', 10, 'number of train iteration')
 
-local opt = cmd:parse(arg or {})
--- load opt to environment, key as variable name and value as value
-for name,val in pairs(opt) do
-   _G[name] = val
+  local opt = cmd:parse(arg or {})
+  -- load opt to environment, key as variable name and value as value
+  for name,val in pairs(opt) do
+    _G[name] = val
+  end
 end
+
 PREFIX = MODEL_PREFIX .. '-' .. MODEL_SUFFIX
 ATLT_NORM = {0, 0.1, RESAMPLE_RATIO/(RESAMPLE_RATIO+1)} -- mean,std,shift
 -- {0, 0.1, 0.5} 1:1
@@ -98,34 +102,34 @@ val_lt_dataloader = dataload.TensorLoader(val_lt, val_lt_target)
 -- 3. define model
 model = nn.Sequential()
 do
-    nn.FastLSTM.usenngraph = true -- faster
-    nn.FastLSTM.bn = USE_BN
+  nn.FastLSTM.usenngraph = true -- faster
+  nn.FastLSTM.bn = USE_BN
 
-    local lstm = nn.Sequential()
+  local lstm = nn.Sequential()
 
-    lstm:add(nn.FastLSTM(NUM_OF_FEAT, HID_SIZE, RHO))
+  lstm:add(nn.FastLSTM(NUM_OF_FEAT, HID_SIZE, RHO))
+  if DROPOUT > 0 then
+    lstm:add(nn.Dropout(DROPOUT))
+  end
+
+  for i = 1, NUM_OF_HID_LAYER do
+    lstm:add(nn.FastLSTM(HID_SIZE, HID_SIZE, RHO))
     if DROPOUT > 0 then
-        lstm:add(nn.Dropout(DROPOUT))
+      lstm:add(nn.Dropout(DROPOUT))
     end
+  end
 
-    for i = 1, NUM_OF_HID_LAYER do
-        lstm:add(nn.FastLSTM(HID_SIZE, HID_SIZE, RHO))
-        if DROPOUT > 0 then
-            lstm:add(nn.Dropout(DROPOUT))
-        end
-    end
+  lstm:add(nn.FastLSTM(HID_SIZE, NUM_OF_CLASS, RHO))
+  if DROPOUT > 0 then
+    lstm:add(nn.Dropout(DROPOUT))
+  end
 
-    lstm:add(nn.FastLSTM(HID_SIZE, NUM_OF_CLASS, RHO))
-    if DROPOUT > 0 then
-        lstm:add(nn.Dropout(DROPOUT))
-    end
+  lstm = nn.Sequencer(lstm)
 
-    lstm = nn.Sequencer(lstm)
-
-    model:add(nn.SplitTable(1, 2)) -- assuming batchSize x seqLen x feat
-    model:add(lstm)
-    model:add(nn.SelectTable(-1)) -- select last output
-    -- model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
+  model:add(nn.SplitTable(1, 2)) -- assuming batchSize x seqLen x feat
+  model:add(lstm)
+  model:add(nn.SelectTable(-1)) -- select last output
+  -- model:add(nn.Linear(HID_SIZE, NUM_OF_CLASS))
 end
 
 -- 4. define criterion
@@ -139,91 +143,90 @@ criterion = criterion:cuda()
 parameters,gradParameters = model:getParameters()
 
 function train(dl, batchsize, num_of_batch, prefix)
-    print('begin trainning')
-    model:training()
-    util.dump_para(prefix..'-parameters')
-    print(prefix)
-    local time_logger = optim.Logger(prefix..'-time.log')
-    time_logger:setNames{'setup time', 'for-back time', 'batch time'}
-    local para_logger = optim.Logger(prefix..'-para.log')
-    para_logger:setNames{'atlt split'}
-    local train_logger = optim.Logger(prefix..'-train.log')
-    train_logger:setNames{'training error'}
+  print('begin trainning')
+  model:training()
+  util.dump_para(prefix..'-parameters')
+  print(prefix)
+  local time_logger = optim.Logger(prefix..'-time.log')
+  time_logger:setNames{'setup time', 'for-back time', 'batch time'}
+  local para_logger = optim.Logger(prefix..'-para.log')
+  para_logger:setNames{'atlt split'}
+  local train_logger = optim.Logger(prefix..'-train.log')
+  train_logger:setNames{'training error'}
 
-    local num_of_batch = num_of_batch or math.floor(NUM_OF_TR_AT / batchsize)
-    local at_dataloader, lt_dataloader = table.unpack(dl)
-    for i = 1, num_of_batch do
-        local batch_timer = torch.Timer()
+  local num_of_batch = num_of_batch or math.floor(NUM_OF_TR_AT / batchsize)
+  local at_dataloader, lt_dataloader = table.unpack(dl)
+  for i = 1, num_of_batch do
+    local batch_timer = torch.Timer()
 
-        -- prepare data
-        local timer = torch.Timer()
-        local split = util.get_atlt_split(ATLT_NORM, batchsize)
-        local input, target = util.resample(at_dataloader, lt_dataloader, split, batchsize)
-        input = input:cuda()
-        target = target:cuda()
-        local setup_time = timer:time().real
+    -- prepare data
+    local timer = torch.Timer()
+    local split = util.get_atlt_split(ATLT_NORM, batchsize)
+    local input, target = util.resample(at_dataloader, lt_dataloader, split, batchsize)
+    input = input:cuda()
+    target = target:cuda()
+    local setup_time = timer:time().real
 
-        -- forward + backward
-        timer:reset()
-        optim[OPTIM_METHOD](function(x)
-            if x ~= parameters then parameters:copy(x) end
-            gradParameters:zero()
+    -- forward + backward
+    timer:reset()
+    optim[OPTIM_METHOD](function(x)
+      if x ~= parameters then parameters:copy(x) end
+      gradParameters:zero()
 
-            model:forward(input)
-            local loss = criterion:forward(model.output, target)
+      model:forward(input)
+      local loss = criterion:forward(model.output, target)
 
-            criterion:backward(model.output, target)
-            model:backward(input, criterion.gradInput)
+      criterion:backward(model.output, target)
+      model:backward(input, criterion.gradInput)
 
-            return loss, gradParameters
-        end, parameters, OPTIM_PARA[OPTIM_METHOD])
-        local bf_time = timer:time().real
+      return loss, gradParameters
+    end, parameters, OPTIM_PARA[OPTIM_METHOD])
+    local bf_time = timer:time().real
 
-        local batch_time = batch_timer:time().real
-        train_logger:add{criterion.output}
-        para_logger:add{split}
-        time_logger:add{setup_time, bf_time, batch_time}
-    end
-    model:clearState()
-    torch.save(prefix..'-model.t7',model)
+    local batch_time = batch_timer:time().real
+    train_logger:add{criterion.output}
+    para_logger:add{split}
+    time_logger:add{setup_time, bf_time, batch_time}
+  end
+  model:clearState()
+  torch.save(prefix..'-model.t7',model)
 end
 
 function eval(dl, batchsize, prefix)
-    print('begin eval')
-    model:evaluate()
-    print(prefix)
-    local eval_logger = optim.Logger(prefix..'-eval.log')
-    eval_logger:setNames{'at->at', 'at->lt', 'lt->at', 'lt->lt'}
-    local confusion = optim.ConfusionMatrix(NUM_OF_CLASS)
-    local at_dataloader, lt_dataloader = table.unpack(dl)
-    local function loop(dataloader)
-        local upbound = dataloader:size() - dataloader:size() % batchsize
-        for k, inputs, targets in dataloader:subiter(batchsize, upbound) do
-            local input = inputs:cuda()
-            local target = targets:cuda()
-            confusion:batchAdd(model:forward(input), target)
-        end
+  print('begin eval')
+  model:evaluate()
+  print(prefix)
+  local eval_logger = optim.Logger(prefix..'-eval.log')
+  eval_logger:setNames{'at->at', 'at->lt', 'lt->at', 'lt->lt'}
+  local confusion = optim.ConfusionMatrix(NUM_OF_CLASS)
+  local at_dataloader, lt_dataloader = table.unpack(dl)
+  local function loop(dataloader)
+    local upbound = dataloader:size() - dataloader:size() % batchsize
+    for k, inputs, targets in dataloader:subiter(batchsize, upbound) do
+      local input = inputs:cuda()
+      local target = targets:cuda()
+      confusion:batchAdd(model:forward(input), target)
     end
-    loop(at_dataloader)
-    loop(lt_dataloader)
-    confusion:updateValids()
-    local m = confusion.mat
-    eval_logger:add{m[{1,1}], m[{1,2}], m[{2,1}], m[{2,2}]}
-    return confusion
+  end
+  loop(at_dataloader)
+  loop(lt_dataloader)
+  confusion:updateValids()
+  local m = confusion.mat
+  eval_logger:add{m[{1,1}], m[{1,2}], m[{2,1}], m[{2,2}]}
+  return confusion
 end
 
 NUM_OF_BAT_IN_1EPOCH = math.floor(NUM_OF_TR_AT*(1+1/RESAMPLE_RATIO) / BAT_SIZE)
 START_ITER = 1
-NUM_OF_ITER = 10
+-- NUM_OF_ITER = 10
 -- LEARNING_RATE = 0.01
 -- OPTIM_PARA[OPTIM_METHOD]['learningRate'] = LEARNING_RATE
 for i = START_ITER, START_ITER + NUM_OF_ITER - 1 do
-    print('===it'..i..'===')
-    local prefix = PREFIX .. '-it' .. tostring(i)
-    train({at_dataloader,lt_dataloader}, BAT_SIZE,
-            NUM_OF_BAT_IN_1EPOCH, prefix)
-    local conf = eval({at_dataloader,lt_dataloader}, BAT_SIZE, prefix..'-train')
-    print('train eval', conf.valids)
-    local conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, prefix..'-vali')
-    print('vali eval', conf.valids)
+  print('===it'..i..'===')
+  local prefix = PREFIX .. '-it' .. tostring(i)
+  train({at_dataloader,lt_dataloader}, BAT_SIZE, NUM_OF_BAT_IN_1EPOCH, prefix)
+  local conf = eval({at_dataloader,lt_dataloader}, BAT_SIZE, prefix..'-train')
+  print('train eval', conf.valids)
+  local conf = eval({val_at_dataloader,val_lt_dataloader}, BAT_SIZE, prefix..'-vali')
+  print('vali eval', conf.valids)
 end
