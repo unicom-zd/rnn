@@ -14,7 +14,7 @@ RHO = 999999 -- 30
 BAT_SIZE = 256
 DROPOUT = 0 -- 0.5 disable dropout when 0
 LEARNING_RATE = 0.01
-OPTIM_METHOD = 'sgd'
+-- OPTIM_METHOD = 'sgd'
 OPTIM_PARA = {}
 OPTIM_PARA['adam'] = {
   learningRate=LEARNING_RATE,
@@ -35,6 +35,7 @@ if USE_COMMAND_LINE then
   cmd:option('--MODEL_PREFIX', 'm1', 'model prefix')
   cmd:option('--RESAMPLE_RATIO', 1, 'AT:LT = RESAMPLE_RATIO:1')
   cmd:option('--NUM_OF_ITER', 10, 'number of train iteration')
+  cmd:option('--OPTIM_METHOD', 'sgd', 'optimization method, sgd or adam')
 
   local opt = cmd:parse(arg or {})
   -- load opt to environment, key as variable name and value as value
