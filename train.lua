@@ -8,7 +8,7 @@ NUM_OF_HID_LAYER = 3 -- input size = output size and previously it is 1
 CLASS_AT = 1.0
 CLASS_LT = 2.0
 -- RESAMPLE_RATIO = 2
-LT_WEIGHT = 1
+-- LT_WEIGHT = 1
 HID_SIZE = 64
 RHO = 999999 -- 30
 BAT_SIZE = 256
@@ -34,6 +34,7 @@ if USE_COMMAND_LINE then
   cmd:text('Options:')
   cmd:option('--MODEL_PREFIX', 'm1', 'model prefix')
   cmd:option('--RESAMPLE_RATIO', 1, 'AT:LT = RESAMPLE_RATIO:1')
+  cmd:option('--LT_WEIGHT', 1, 'weight for predicted as LT, weight of AT is 1')
   cmd:option('--NUM_OF_ITER', 10, 'number of train iteration')
   cmd:option('--OPTIM_METHOD', 'sgd', 'optimization method, sgd or adam')
 
