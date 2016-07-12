@@ -1,7 +1,7 @@
 # data preprocessing
-See [script/preprocess.ipynb](http://nbviewer.jupyter.org/github/unicom-zd/rnn/blob/master/script/preprocess.ipynb).
+See [preprocess.ipynb](http://nbviewer.jupyter.org/github/unicom-zd/rnn/blob/master/script/preprocess.ipynb)(`script/preprocess.ipynb`).
 
-# train RNN
+# training RNN
 ```
 Example:
 th train.lua --MODEL_PREFIX "m2" --RESAMPLE_RATIO 4
@@ -12,3 +12,6 @@ Options:
   --NUM_OF_ITER    number of train iteration [10]
   --OPTIM_METHOD   optimization method, sgd or adam [sgd]
 ```
+
+## training monitor
+See [monitor.ipynb](http://nbviewer.jupyter.org/github/unicom-zd/rnn/blob/master/script/monitor.ipynb)(`script/check.ipynb`).
