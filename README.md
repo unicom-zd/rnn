@@ -1,3 +1,7 @@
+# data preprocessing
+See `script/preprocess.ipynb`.
+
+# train RNN
 ```
 Example:
 th train.lua --MODEL_PREFIX "m2" --RESAMPLE_RATIO 4
