@@ -1,5 +1,5 @@
 # data preprocessing
-See `script/preprocess.ipynb`.
+See [script/preprocess.ipynb](http://nbviewer.jupyter.org/github/unicom-zd/rnn/blob/master/script/preprocess.ipynb).
 
 # train RNN
 ```
